@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getQuote, getChartData, getMarketContext } from '@/lib/yahoo-finance';
 import { analyzeStock } from '@/lib/analysis-engine';
-import { generatePrediction } from '@/lib/claude-predictor';
+import { generatePrediction, generateRuleBasedPrediction } from '@/lib/claude-predictor';
 
 export async function GET(
   _req: NextRequest,
@@ -15,7 +15,12 @@ export async function GET(
       getMarketContext(),
     ]);
     const analysis = analyzeStock(quote, candles, market);
-    const prediction = await generatePrediction(quote, analysis, market);
+    const hasApiKey =
+      process.env.ANTHROPIC_API_KEY &&
+      process.env.ANTHROPIC_API_KEY !== 'your_anthropic_key_here';
+    const prediction = hasApiKey
+      ? await generatePrediction(quote, analysis, market)
+      : generateRuleBasedPrediction(quote, analysis, market);
     return NextResponse.json(prediction);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Unknown error';

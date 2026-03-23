@@ -1,10 +1,9 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { AIPrediction } from '@/lib/types';
 
-const dirConfig = {
-  UP: { color: 'text-emerald-500', bg: 'bg-emerald-500/10 border-emerald-500/30', icon: '↑', label: 'SUBE' },
-  DOWN: { color: 'text-red-500', bg: 'bg-red-500/10 border-red-500/30', icon: '↓', label: 'BAJA' },
-  SIDEWAYS: { color: 'text-amber-500', bg: 'bg-amber-500/10 border-amber-500/30', icon: '→', label: 'LATERAL' },
+const dirCfg = {
+  UP:       { glow: 'var(--buy-glow)',  border: 'rgba(0,229,160,0.25)',   color: 'var(--buy)',  icon: '▲', label: 'SUBE' },
+  DOWN:     { glow: 'var(--sell-glow)', border: 'rgba(255,61,87,0.25)',   color: 'var(--sell)', icon: '▼', label: 'BAJA' },
+  SIDEWAYS: { glow: 'var(--hold-glow)', border: 'rgba(255,170,0,0.25)',   color: 'var(--hold)', icon: '→', label: 'LATERAL' },
 };
 
 export function PredictionPanel({
@@ -14,99 +13,136 @@ export function PredictionPanel({
   prediction: AIPrediction;
   currentPrice: number;
 }) {
-  const cfg = dirConfig[prediction.direction];
-  const targetMid = (prediction.targetLow + prediction.targetHigh) / 2;
-  const upsidePct = ((targetMid - currentPrice) / currentPrice) * 100;
+  const cfg = dirCfg[prediction.direction];
+  const mid = (prediction.targetLow + prediction.targetHigh) / 2;
+  const midPct = ((mid - currentPrice) / currentPrice) * 100;
+  const lowPct  = ((prediction.targetLow - currentPrice) / currentPrice) * 100;
+  const highPct = ((prediction.targetHigh - currentPrice) / currentPrice) * 100;
 
   return (
-    <Card className={`border-2 ${cfg.bg}`}>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <span>🤖</span>
-          <span>Predicción IA (Claude) — 30 días</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {/* Direction + probability */}
-        <div className="flex items-center gap-6">
-          <div className={`text-5xl font-black ${cfg.color}`}>
-            {cfg.icon} {cfg.label}
-          </div>
-          <div className="space-y-0.5">
-            <p className="text-xs text-muted-foreground">Probabilidad</p>
-            <p className={`text-3xl font-bold ${cfg.color}`}>{prediction.probability}%</p>
+    <div
+      className="terminal-card p-5 space-y-5"
+      style={{ borderColor: cfg.border, boxShadow: `0 0 30px rgba(0,0,0,0.4)` }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="font-display text-lg tracking-widest" style={{ color: 'var(--foreground)' }}>
+            PREDICCIÓN
+          </span>
+          <span className="label-caps" style={{ color: 'var(--text-tertiary)' }}>
+            {prediction.isAI ? '30 DÍAS · CLAUDE AI' : '30 DÍAS · TÉCNICO'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {!prediction.isAI && (
+            <span
+              className="font-data text-xs px-2 py-0.5 rounded"
+              style={{ background: 'rgba(255,171,0,0.08)', color: 'var(--hold)', border: '1px solid rgba(255,171,0,0.2)' }}
+            >
+              SIN IA
+            </span>
+          )}
+          <span
+            className="font-data text-xs px-2 py-0.5 rounded"
+            style={{ background: 'var(--surface-raised)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+          >
+            EDUCATIVO
+          </span>
+        </div>
+      </div>
+
+      {/* Direction + probability row */}
+      <div className="flex items-center gap-6">
+        <div
+          className="font-display text-5xl tracking-wider px-5 py-2 rounded"
+          style={{
+            color: cfg.color,
+            background: `${cfg.color}10`,
+            border: `1px solid ${cfg.border}`,
+            boxShadow: cfg.glow,
+            letterSpacing: '0.12em',
+          }}
+        >
+          {cfg.icon} {cfg.label}
+        </div>
+        <div className="space-y-0.5">
+          <div className="label-caps">PROBABILIDAD</div>
+          <div
+            className="font-display text-4xl"
+            style={{ color: cfg.color, lineHeight: 1 }}
+          >
+            {prediction.probability}
+            <span className="text-2xl opacity-60">%</span>
           </div>
         </div>
+      </div>
 
-        {/* Price targets */}
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="bg-muted/50 rounded-lg p-3">
-            <p className="text-xs text-muted-foreground mb-1">Target Mínimo</p>
-            <p className="font-bold tabular-nums">${prediction.targetLow.toFixed(2)}</p>
-            <p className={`text-xs ${prediction.targetLow >= currentPrice ? 'text-emerald-500' : 'text-red-500'}`}>
-              {((prediction.targetLow - currentPrice) / currentPrice * 100).toFixed(1)}%
-            </p>
+      {/* Price target cards */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: 'MÍNIMO', price: prediction.targetLow, pct: lowPct },
+          { label: 'CENTRAL', price: mid, pct: midPct, highlight: true },
+          { label: 'MÁXIMO', price: prediction.targetHigh, pct: highPct },
+        ].map(({ label, price, pct, highlight }) => (
+          <div
+            key={label}
+            className="rounded p-3 text-center space-y-1"
+            style={{
+              background: highlight ? `${cfg.color}0d` : 'var(--surface-raised)',
+              border: `1px solid ${highlight ? cfg.border : 'var(--border)'}`,
+            }}
+          >
+            <div className="label-caps">{label}</div>
+            <div
+              className="font-data text-base font-bold tabular-nums"
+              style={{ color: highlight ? cfg.color : 'var(--foreground)' }}
+            >
+              ${price.toFixed(2)}
+            </div>
+            <div
+              className="font-data text-xs"
+              style={{ color: pct >= 0 ? 'var(--buy)' : 'var(--sell)' }}
+            >
+              {pct >= 0 ? '+' : ''}{pct.toFixed(1)}%
+            </div>
           </div>
-          <div className={`rounded-lg p-3 border ${cfg.bg}`}>
-            <p className="text-xs text-muted-foreground mb-1">Target Central</p>
-            <p className={`font-bold text-lg tabular-nums ${cfg.color}`}>
-              ${targetMid.toFixed(2)}
-            </p>
-            <p className={`text-xs font-semibold ${upsidePct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-              {upsidePct >= 0 ? '+' : ''}{upsidePct.toFixed(1)}%
-            </p>
-          </div>
-          <div className="bg-muted/50 rounded-lg p-3">
-            <p className="text-xs text-muted-foreground mb-1">Target Máximo</p>
-            <p className="font-bold tabular-nums">${prediction.targetHigh.toFixed(2)}</p>
-            <p className={`text-xs ${prediction.targetHigh >= currentPrice ? 'text-emerald-500' : 'text-red-500'}`}>
-              {((prediction.targetHigh - currentPrice) / currentPrice * 100).toFixed(1)}%
-            </p>
-          </div>
-        </div>
+        ))}
+      </div>
 
-        {/* Reasoning */}
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            Razonamiento
-          </p>
-          <p className="text-sm leading-relaxed">{prediction.reasoning}</p>
-        </div>
+      {/* Reasoning */}
+      <div className="space-y-2" style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+        <div className="label-caps">RAZONAMIENTO</div>
+        <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          {prediction.reasoning}
+        </p>
+      </div>
 
-        {/* Key factors */}
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            Factores Clave
-          </p>
+      {/* Factors + Risks side by side */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <div className="label-caps">FACTORES CLAVE</div>
           <ul className="space-y-1.5">
             {prediction.keyFactors.map((f, i) => (
-              <li key={i} className="text-sm flex gap-2">
-                <span className={cfg.color}>•</span>
+              <li key={i} className="flex gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <span style={{ color: cfg.color, marginTop: 1 }}>▶</span>
                 <span>{f}</span>
               </li>
             ))}
           </ul>
         </div>
-
-        {/* Prediction risks */}
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-            Riesgos a la Predicción
-          </p>
+        <div className="space-y-2">
+          <div className="label-caps">RIESGOS</div>
           <ul className="space-y-1.5">
             {prediction.risks.map((r, i) => (
-              <li key={i} className="text-sm flex gap-2">
-                <span className="text-amber-500">⚠</span>
-                <span className="text-muted-foreground">{r}</span>
+              <li key={i} className="flex gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <span style={{ color: 'var(--hold)', marginTop: 1 }}>⚠</span>
+                <span>{r}</span>
               </li>
             ))}
           </ul>
         </div>
-
-        <p className="text-xs text-muted-foreground border-t pt-3">
-          ⚠️ No es asesoramiento financiero. Generado por IA con fines educativos únicamente.
-        </p>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
