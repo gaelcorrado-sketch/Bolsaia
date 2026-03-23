@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getQuote, getChartData, getMarketContext } from '@/lib/yahoo-finance';
 import { analyzeStock } from '@/lib/analysis-engine';
-import { computeSignalFromAnalysis } from '@/lib/signal-utils';
+import { computeCombinedSignal } from '@/lib/signal-utils';
 import { ALL_TICKERS } from '@/lib/stockNames';
 import type { Quote, ChartCandle, Signal } from '@/lib/types';
 import type { WatchlistItem } from '@/app/api/watchlist/route';
@@ -69,8 +69,9 @@ export async function GET() {
     .map(({ quote, candles }) => {
       // Use the same analyzeStock() as the full detail view — signals are consistent
       const analysis = analyzeStock(quote, candles, market);
-      // Use majority-voting combined signal (same logic as the detail page banner)
-      const { signal } = computeSignalFromAnalysis(analysis);
+      // Use the canonical combined signal with vetoes (same logic as the detail page banner)
+      const { veto } = computeCombinedSignal(analysis, market);
+      const signal = veto.finalSignal;
       return {
         ticker:         quote.ticker,
         name:           quote.name,

@@ -12,6 +12,7 @@ import { AffiliateCard } from '@/components/AffiliateCard';
 import { useQuote, useAnalysis, usePrediction, useMarketData, useWatchlist, useSignals } from '@/hooks/useStock';
 import type { SignalItem } from '@/hooks/useStock';
 import { CATEGORIES, getTickersByCategory } from '@/lib/stockNames';
+import { computeCombinedSignal } from '@/lib/signal-utils';
 import type { WatchlistItem } from '@/app/api/watchlist/route';
 import type { FibonacciAnalysis, ElliottWaveAnalysis, Signal, Confidence, StockAnalysis, MarketContext, AIPrediction } from '@/lib/types';
 
@@ -488,49 +489,6 @@ function ElliottWavePanel({ wave }: { wave: ElliottWaveAnalysis }) {
   );
 }
 
-// ── Shared: combined signal computation (confidence-weighted) ─────────────
-function computeCombinedSignal(analysis: StockAnalysis, market?: MarketContext): {
-  signal: Signal;
-  confidence: Confidence;
-  agreementCount: number;
-  weightedScore: number;
-  sources: Array<{ name: string; signal: Signal; confidence: Confidence; weight: number }>;
-} {
-  const sv = (s: Signal) => s === 'BUY' ? 1 : s === 'SELL' ? -1 : 0;
-  // Penalize low-confidence sources so they pull the result less
-  const confMult = (c: Confidence) => c === 'HIGH' ? 1.0 : c === 'MEDIUM' ? 0.75 : 0.40;
-
-  const sources = [
-    { name: 'Técnico',          signal: analysis.signal,             confidence: analysis.confidence,              baseWeight: 0.50 },
-    { name: 'Fibonacci',        signal: analysis.fibonacci.signal,   confidence: 'MEDIUM' as Confidence,          baseWeight: 0.30 },
-    { name: 'Ondas de Elliott', signal: analysis.elliottWave.signal, confidence: analysis.elliottWave.confidence, baseWeight: 0.20 },
-  ].map(s => ({ ...s, weight: s.baseWeight * confMult(s.confidence) }));
-
-  const totalWeight = sources.reduce((a, s) => a + s.weight, 0);
-  const weightedScore = sources.reduce((a, s) => a + sv(s.signal) * s.weight, 0) / totalWeight;
-
-  // Majority voting: 2/3 or 3/3 agreement always wins
-  const voteCounts: Record<Signal, number> = { BUY: 0, SELL: 0, HOLD: 0 };
-  for (const s of sources) voteCounts[s.signal]++;
-  const maxVotes = Math.max(...Object.values(voteCounts));
-
-  let signal: Signal;
-  if (maxVotes >= 2) {
-    // Clear majority (2/3 or 3/3) — majority always wins regardless of weights
-    signal = (Object.entries(voteCounts) as [Signal, number][]).find(([, v]) => v === maxVotes)![0];
-  } else {
-    // 1-1-1 tie: fall back to weighted score as tiebreaker
-    const threshold = (market?.regime === 'BEAR' && (market?.vix ?? 0) > 35) ? 0.30 : 0.15;
-    signal = weightedScore >= threshold ? 'BUY' : weightedScore <= -threshold ? 'SELL' : 'HOLD';
-  }
-
-  const agreementCount = sources.filter(s => s.signal === signal).length;
-  const confidence: Confidence = agreementCount === 3 ? 'HIGH' : agreementCount === 2 ? 'MEDIUM' : 'LOW';
-  return {
-    signal, confidence, agreementCount, weightedScore,
-    sources: sources.map(({ name, signal: sig, confidence: conf, weight }) => ({ name, signal: sig, confidence: conf, weight })),
-  };
-}
 
 // ── Timing computation ─────────────────────────────────────────────────────
 interface TimingResult {
@@ -755,7 +713,7 @@ function CombinedVerdictBanner({
   prediction?: AIPrediction;
 }) {
   const cs = computeCombinedSignal(analysis, market);
-  const { signal, confidence, agreementCount, weightedScore, sources } = cs;
+  const { signal, confidence, agreementCount, weightedScore, sources, veto } = cs;
 
   const SIG_CFG = {
     BUY:  { label: 'COMPRAR',  icon: '▲', color: 'var(--buy)',  bg: 'rgba(34,197,94,0.07)',  border: 'rgba(34,197,94,0.25)' },
@@ -797,6 +755,25 @@ function CombinedVerdictBanner({
           CONCLUSIÓN FINAL
         </div>
       </div>
+
+      {/* Veto warning — shown when the technical signal was overridden */}
+      {veto.vetoed && (
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-lg"
+          style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.28)' }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--hold)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span className="text-xs font-medium leading-snug" style={{ color: 'var(--hold)' }}>
+            {veto.label}
+          </span>
+          <span className="label-caps ml-auto shrink-0" style={{ color: 'var(--text-tertiary)', fontSize: '0.50rem' }}>
+            sin ajuste: {veto.originalSignal === 'BUY' ? 'COMPRAR' : veto.originalSignal === 'SELL' ? 'VENDER' : 'MANTENER'}
+          </span>
+        </div>
+      )}
 
       {/* Summary text */}
       <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
