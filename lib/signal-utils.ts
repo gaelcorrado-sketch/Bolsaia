@@ -15,7 +15,7 @@ export interface VetoInfo {
  */
 export function applySignalVetoes(
   signal: Signal,
-  confidence: Confidence,
+  _confidence: Confidence,
   analysis: StockAnalysis,
   market?: MarketContext
 ): VetoInfo {
@@ -24,44 +24,49 @@ export function applySignalVetoes(
   };
   if (signal !== 'BUY') return noVeto;
 
-  const { rsi, priceVsHigh52w, fibonacci, elliottWave, fundamentals } = analysis;
+  const { rsi, priceVsHigh52w, fibonacci, elliottWave, fundamentals, risks } = analysis;
   const triggered: string[] = [];
 
-  // Veto 1: Extreme RSI overbought (>=78)
-  // Exception: early bull waves (Wave 1–3 in IMPULSE) are expected to run with high RSI
-  const isEarlyBullWave =
+  // Veto 1: RSI overbought >= 70 (standard definition — always fires)
+  // Only exception: Wave 3 IMPULSE with HIGH Elliott confidence (strongest bull wave, RSI expected high)
+  const isWave3High =
     elliottWave.phase === 'IMPULSE' &&
-    (['Wave 1', 'Wave 2', 'Wave 3'] as string[]).includes(elliottWave.currentWave);
-  if (rsi >= 78 && !isEarlyBullWave) {
+    elliottWave.currentWave === 'Wave 3' &&
+    elliottWave.confidence === 'HIGH';
+  if (rsi >= 70 && !isWave3High) {
     triggered.push(`RSI sobrecomprado (${rsi.toFixed(0)})`);
   }
 
-  // Veto 2: Mild RSI overbought (70–77), only when agreement is weak (not HIGH confidence)
-  if (rsi >= 70 && rsi < 78 && confidence !== 'HIGH') {
-    triggered.push(`RSI elevado (${rsi.toFixed(0)}) con señal débil`);
-  }
-
-  // Veto 3: Price within 2% of 52-week high without Fibonacci confirming further upside
-  if (priceVsHigh52w > -2 && fibonacci.signal !== 'BUY') {
+  // Veto 2: Price within 5% of 52-week high without Fibonacci confirming further extension
+  if (priceVsHigh52w > -5 && fibonacci.signal !== 'BUY') {
     const gap = Math.max(0, -priceVsHigh52w).toFixed(1);
     triggered.push(`cerca del máximo anual (${gap}% del techo)`);
   }
 
-  // Veto 4: Extreme fear — BEAR regime + VIX >= 40
-  if (market?.regime === 'BEAR' && (market.vix ?? 0) >= 40) {
-    triggered.push(`mercado en pánico (VIX ${market.vix.toFixed(0)}, régimen bajista)`);
+  // Veto 3: Long-term downtrend — price below MA200
+  if (risks.some(r => r.includes('MA200'))) {
+    triggered.push('precio bajo la tendencia de largo plazo (MA200)');
   }
 
-  // Veto 5: Analyst consensus leaning SELL (>=3.8 on 1=Strong Buy … 5=Strong Sell scale)
-  // Requires at least 5 analysts to avoid single-outlier triggers
+  // Veto 4: Bearish moving average cross — MA20 below MA50
+  if (risks.some(r => r.includes('MA20 bajo MA50'))) {
+    triggered.push('cruce bajista de medias móviles (MA20 < MA50)');
+  }
+
+  // Veto 5: Bear market regime + elevated VIX
+  if (market?.regime === 'BEAR' && (market.vix ?? 0) >= 25) {
+    triggered.push(`régimen bajista (VIX ${(market.vix ?? 0).toFixed(0)})`);
+  }
+
+  // Veto 6: Analyst consensus negative (>= 3.5 on 1=Strong Buy … 5=Strong Sell, 3+ analysts)
   const recMean = fundamentals?.recommendationMean ?? null;
   const numAnalysts = fundamentals?.numberOfAnalysts ?? null;
-  if (recMean !== null && numAnalysts !== null && recMean >= 3.8 && numAnalysts >= 5) {
+  if (recMean !== null && numAnalysts !== null && recMean >= 3.5 && numAnalysts >= 3) {
     triggered.push(`consenso de analistas negativo (${recMean.toFixed(1)}/5.0)`);
   }
 
-  // Veto 6: High-confidence Fibonacci resistance (reliabilityScore >= 60)
-  if (fibonacci.signal === 'SELL' && fibonacci.reliabilityScore >= 60) {
+  // Veto 7: Fibonacci resistance with moderate-to-high reliability (>= 50)
+  if (fibonacci.signal === 'SELL' && fibonacci.reliabilityScore >= 50) {
     triggered.push('resistencia Fibonacci confirmada');
   }
 
