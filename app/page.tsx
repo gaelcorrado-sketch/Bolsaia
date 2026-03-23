@@ -68,17 +68,6 @@ function Change({ pct, size = 'sm' }: { pct: number; size?: 'xs' | 'sm' }) {
   );
 }
 
-// ── Simplified signal from day change ─────────────────────────────────────
-function quickSignal(item: WatchlistItem) {
-  const p = item.changePercent;
-  if (p >= 1.5) return 'BUY';
-  if (p <= -1.5) return 'SELL';
-  return 'HOLD';
-}
-
-function signalColor(s: 'BUY' | 'HOLD' | 'SELL') {
-  return s === 'BUY' ? 'var(--buy)' : s === 'SELL' ? 'var(--sell)' : 'var(--hold)';
-}
 
 // ── Watchlist stock card ───────────────────────────────────────────────────
 function StockCard({
@@ -92,10 +81,8 @@ function StockCard({
   isFav?: boolean;
   onToggleFav?: (ticker: string) => void;
 }) {
-  const sig = quickSignal(item);
-  const sigColor = signalColor(sig);
   const up = item.changePercent >= 0;
-  const cardClass = sig === 'BUY' ? 'stock-card stock-card-buy' : sig === 'SELL' ? 'stock-card stock-card-sell' : 'stock-card stock-card-hold';
+  const cardClass = 'stock-card';
 
   return (
     <button
@@ -120,11 +107,6 @@ function StockCard({
               <span style={{ color: isFav ? 'var(--hold)' : 'var(--text-tertiary)' }}>{isFav ? '★' : '☆'}</span>
             </button>
           )}
-          <div
-            className="w-1.5 h-1.5 rounded-full"
-            style={{ background: sigColor }}
-            title={sig}
-          />
         </div>
       </div>
       {/* Name */}
@@ -145,8 +127,6 @@ function StockCard({
           </span>
         )}
       </div>
-      {/* Signal accent bar at bottom */}
-      <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ background: `linear-gradient(to right, ${sigColor}40, transparent)` }} />
     </button>
   );
 }
@@ -529,9 +509,21 @@ function computeCombinedSignal(analysis: StockAnalysis, market?: MarketContext):
   const totalWeight = sources.reduce((a, s) => a + s.weight, 0);
   const weightedScore = sources.reduce((a, s) => a + sv(s.signal) * s.weight, 0) / totalWeight;
 
-  // Stricter threshold in extreme bear markets (VIX > 35)
-  const threshold = (market?.regime === 'BEAR' && (market?.vix ?? 0) > 35) ? 0.30 : 0.20;
-  const signal: Signal = weightedScore >= threshold ? 'BUY' : weightedScore <= -threshold ? 'SELL' : 'HOLD';
+  // Majority voting: 2/3 or 3/3 agreement always wins
+  const voteCounts: Record<Signal, number> = { BUY: 0, SELL: 0, HOLD: 0 };
+  for (const s of sources) voteCounts[s.signal]++;
+  const maxVotes = Math.max(...Object.values(voteCounts));
+
+  let signal: Signal;
+  if (maxVotes >= 2) {
+    // Clear majority (2/3 or 3/3) — majority always wins regardless of weights
+    signal = (Object.entries(voteCounts) as [Signal, number][]).find(([, v]) => v === maxVotes)![0];
+  } else {
+    // 1-1-1 tie: fall back to weighted score as tiebreaker
+    const threshold = (market?.regime === 'BEAR' && (market?.vix ?? 0) > 35) ? 0.30 : 0.15;
+    signal = weightedScore >= threshold ? 'BUY' : weightedScore <= -threshold ? 'SELL' : 'HOLD';
+  }
+
   const agreementCount = sources.filter(s => s.signal === signal).length;
   const confidence: Confidence = agreementCount === 3 ? 'HIGH' : agreementCount === 2 ? 'MEDIUM' : 'LOW';
   return {
@@ -770,12 +762,9 @@ function CombinedVerdictBanner({
     HOLD: { label: 'MANTENER', icon: '■', color: 'var(--hold)', bg: 'rgba(245,158,11,0.07)', border: 'rgba(245,158,11,0.25)' },
     SELL: { label: 'VENDER',   icon: '▼', color: 'var(--sell)', bg: 'rgba(239,68,68,0.07)',  border: 'rgba(239,68,68,0.25)' },
   } as const;
-  const CONF_LABEL = { HIGH: 'ALTA CONVICCIÓN', MEDIUM: 'CONVICCIÓN MEDIA', LOW: 'BAJA CONVICCIÓN' } as const;
-  const CONF_COLOR = { HIGH: 'var(--buy)', MEDIUM: 'var(--hold)', LOW: 'var(--sell)' } as const;
   const SIG_ICON  = { BUY: '↑', SELL: '↓', HOLD: '→' } as const;
 
   const cfg = SIG_CFG[signal];
-  const confColor = CONF_COLOR[confidence];
 
   const summaryText =
     agreementCount === 3 ? 'Los tres métodos de análisis coinciden. La señal es sólida.' :
@@ -799,9 +788,6 @@ function CombinedVerdictBanner({
             {cfg.icon} {cfg.label}
           </div>
           <div className="space-y-0.5">
-            <div className="font-data text-sm font-bold" style={{ color: confColor }}>
-              {CONF_LABEL[confidence]}
-            </div>
             <div className="label-caps" style={{ color: 'var(--text-tertiary)' }}>
               {agreementCount}/3 métodos coinciden · {pct}% de convicción
             </div>
@@ -1627,14 +1613,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Combined verdict banner — single conclusion for the whole page */}
-                <CombinedVerdictBanner
-                  analysis={analysis}
-                  market={quoteData.market}
-                  currentPrice={quoteData.quote.price}
-                  prediction={prediction ?? undefined}
-                />
-
                 {/* Chart */}
                 <div className="terminal-card p-4 space-y-3">
                   <div className="flex items-center gap-1.5">
@@ -1665,6 +1643,14 @@ export default function Dashboard() {
                     ma200={period === '1y' ? analysis.ma200 : undefined}
                   />
                 </div>
+
+                {/* Combined verdict banner — single conclusion for the whole page */}
+                <CombinedVerdictBanner
+                  analysis={analysis}
+                  market={quoteData.market}
+                  currentPrice={quoteData.quote.price}
+                  prediction={prediction ?? undefined}
+                />
 
                 {/* Content grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

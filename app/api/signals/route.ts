@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getQuote, getChartData, getMarketContext } from '@/lib/yahoo-finance';
 import { analyzeStock } from '@/lib/analysis-engine';
+import { computeSignalFromAnalysis } from '@/lib/signal-utils';
 import { ALL_TICKERS } from '@/lib/stockNames';
-import type { Quote, ChartCandle } from '@/lib/types';
+import type { Quote, ChartCandle, Signal } from '@/lib/types';
 import type { WatchlistItem } from '@/app/api/watchlist/route';
 
 export interface SignalItem extends WatchlistItem {
@@ -13,12 +14,6 @@ export interface SignalsResponse {
   buy:  SignalItem[];
   hold: SignalItem[];
   sell: SignalItem[];
-}
-
-function scoreToSignal(score: number): 'BUY' | 'HOLD' | 'SELL' {
-  if (score >= 60) return 'BUY';
-  if (score <= 40) return 'SELL';
-  return 'HOLD';
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -65,30 +60,38 @@ export async function GET() {
     })
   );
 
-  const all: SignalItem[] = batchResults
+  type AllItem = SignalItem & { _signal: Signal };
+
+  const all: AllItem[] = batchResults
     .filter((r): r is PromiseFulfilledResult<Pair[]> => r.status === 'fulfilled')
     .flatMap((r) => r.value)
     .filter(({ quote }) => quote.price > 0)
     .map(({ quote, candles }) => {
       // Use the same analyzeStock() as the full detail view — signals are consistent
       const analysis = analyzeStock(quote, candles, market);
+      // Use majority-voting combined signal (same logic as the detail page banner)
+      const { signal } = computeSignalFromAnalysis(analysis);
       return {
-        ticker:        quote.ticker,
-        name:          quote.name,
-        price:         quote.price,
-        change:        quote.change,
-        changePercent: quote.changePercent,
-        volume:        quote.volume,
-        marketCap:     quote.marketCap,
-        high52w:       quote.high52w,
-        low52w:        quote.low52w,
+        ticker:         quote.ticker,
+        name:           quote.name,
+        price:          quote.price,
+        change:         quote.change,
+        changePercent:  quote.changePercent,
+        volume:         quote.volume,
+        marketCap:      quote.marketCap,
+        high52w:        quote.high52w,
+        low52w:         quote.low52w,
         compositeScore: analysis.score,
-      } satisfies SignalItem;
+        _signal:        signal,
+      };
     });
 
-  const buy  = all.filter((i) => scoreToSignal(i.compositeScore) === 'BUY' ).sort((a, b) => b.compositeScore - a.compositeScore);
-  const sell = all.filter((i) => scoreToSignal(i.compositeScore) === 'SELL').sort((a, b) => a.compositeScore - b.compositeScore);
-  const hold = all.filter((i) => scoreToSignal(i.compositeScore) === 'HOLD').sort((a, b) => b.compositeScore - a.compositeScore);
+  // Strip internal _signal field before returning
+  const toItem = ({ _signal: _, ...item }: AllItem): SignalItem => item;
+
+  const buy  = all.filter((i) => i._signal === 'BUY' ).sort((a, b) => b.compositeScore - a.compositeScore).map(toItem);
+  const sell = all.filter((i) => i._signal === 'SELL').sort((a, b) => a.compositeScore - b.compositeScore).map(toItem);
+  const hold = all.filter((i) => i._signal === 'HOLD').sort((a, b) => b.compositeScore - a.compositeScore).map(toItem);
 
   return NextResponse.json({ buy, hold, sell } satisfies SignalsResponse, {
     headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=60' },
