@@ -49,7 +49,7 @@ export async function GET() {
         batch.map(async (ticker): Promise<Pair> => {
           const [quote, candles] = await Promise.all([
             getQuote(ticker),
-            getChartData(ticker, '1y'),
+            getChartData(ticker, '3mo'),
           ]);
           return { quote, candles };
         })
