@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getQuote, getChartData, getMarketContext } from '@/lib/yahoo-finance';
+import { getQuote, getChartData, getMarketContext, getFundamentals } from '@/lib/yahoo-finance';
 import { analyzeStock } from '@/lib/analysis-engine';
 import { computeCombinedSignal } from '@/lib/signal-utils';
 import { ALL_TICKERS } from '@/lib/stockNames';
@@ -24,7 +24,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 const BATCH = 20;
 
-type Pair = { quote: Quote; candles: ChartCandle[] };
+type AnalysisData = { quote: Quote; candles: ChartCandle[]; fundamentals: Awaited<ReturnType<typeof getFundamentals>> };
 
 export async function GET() {
   const tickers = ALL_TICKERS.map((t) => t.ticker);
@@ -39,23 +39,24 @@ export async function GET() {
     regime: 'NEUTRAL' as const,
   }));
 
-  // Fetch quote + 3mo chart per ticker in parallel batches of 20
-  // 3mo gives ~63 daily bars → enough for RSI(14), MA20, MA50
+  // Fetch quote + 1y chart + fundamentals per ticker in parallel batches of 20
+  // 1y gives ~252 daily bars — same as /api/analysis/[ticker] → consistent signals
   const batches = chunk(tickers, BATCH);
 
   const batchResults = await Promise.allSettled(
     batches.map(async (batch) => {
       const results = await Promise.allSettled(
-        batch.map(async (ticker): Promise<Pair> => {
-          const [quote, candles] = await Promise.all([
+        batch.map(async (ticker): Promise<AnalysisData> => {
+          const [quote, candles, fundamentals] = await Promise.all([
             getQuote(ticker),
-            getChartData(ticker, '3mo'),
+            getChartData(ticker, '1y'),
+            getFundamentals(ticker),
           ]);
-          return { quote, candles };
+          return { quote, candles, fundamentals };
         })
       );
       return results
-        .filter((r): r is PromiseFulfilledResult<Pair> => r.status === 'fulfilled')
+        .filter((r): r is PromiseFulfilledResult<AnalysisData> => r.status === 'fulfilled')
         .map((r) => r.value);
     })
   );
@@ -63,13 +64,12 @@ export async function GET() {
   type AllItem = SignalItem & { _signal: Signal };
 
   const all: AllItem[] = batchResults
-    .filter((r): r is PromiseFulfilledResult<Pair[]> => r.status === 'fulfilled')
+    .filter((r): r is PromiseFulfilledResult<AnalysisData[]> => r.status === 'fulfilled')
     .flatMap((r) => r.value)
     .filter(({ quote }) => quote.price > 0)
-    .map(({ quote, candles }) => {
-      // Use the same analyzeStock() as the full detail view — signals are consistent
-      const analysis = analyzeStock(quote, candles, market);
-      // Use the canonical combined signal with vetoes (same logic as the detail page banner)
+    .map(({ quote, candles, fundamentals }) => {
+      // Same inputs as /api/analysis/[ticker] → signals always match the detail page
+      const analysis = analyzeStock(quote, candles, market, fundamentals);
       const { veto } = computeCombinedSignal(analysis, market);
       const signal = veto.finalSignal;
       return {
